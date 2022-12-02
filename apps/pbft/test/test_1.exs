@@ -26,7 +26,7 @@ defmodule Test1 do
         a_private
       )
 
-    spawn(:a, fn -> Pbft.become_leader(a_config) end)
+    spawn(:a, fn -> Pbft.become_primary(a_config) end)
 
     client =
       spawn(:client, fn ->

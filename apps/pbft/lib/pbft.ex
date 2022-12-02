@@ -23,7 +23,7 @@ defmodule Pbft do
     cluster: nil,
     current_term: nil,
     log: nil,
-    is_leader: nil,
+    is_primary: nil,
 
     # Service State
     queue: nil,
@@ -60,7 +60,7 @@ defmodule Pbft do
       current_term: 0,
       log: [],
       queue: :queue.new(),
-      is_leader: false
+      is_primary: false
     }
   end
 
@@ -98,34 +98,34 @@ defmodule Pbft do
   end
 
   @doc """
-  make_leader changes process state for a process that
-  has just been elected leader.
+  make_primary changes process state for a process that
+  has just been elected primary.
   """
-  @spec make_leader(%Pbft{}) :: %Pbft{is_leader: true}
-  def make_leader(state) do
+  @spec make_primary(%Pbft{}) :: %Pbft{is_primary: true}
+  def make_primary(state) do
     %{
       state
-      | is_leader: true
+      | is_primary: true
     }
   end
 
   @doc """
   This function transitions a process that is not currently
-  the leader so it is a leader.
+  the primary so it is a primary.
   """
-  @spec become_leader(%Pbft{is_leader: false}) :: no_return()
-  def become_leader(state) do
+  @spec become_primary(%Pbft{is_primary: false}) :: no_return()
+  def become_primary(state) do
     # Send initial AppendEntry heartbeat
 
-    leader(make_leader(state), %{})
+    primary(make_primary(state), %{})
   end
 
   @doc """
   This function implements the state machine for a process
-  that is currently the leader.
+  that is currently the primary.
   """
-  @spec leader(%Pbft{is_leader: true}, any()) :: no_return()
-  def leader(state, extra_state) do
+  @spec primary(%Pbft{is_primary: true}, any()) :: no_return()
+  def primary(state, extra_state) do
     receive do
       {sender,
        {%Pbft.ClientMessageRequest{
@@ -133,7 +133,7 @@ defmodule Pbft do
           operation: operation,
           request_timestamp: request_timestamp
         }, digest}} ->
-        IO.puts("Leader #{whoami} Received command from #{sender} ")
+        IO.puts("Primary #{whoami} Received command from #{sender} ")
 
         if verify_digest(
              digest,
@@ -165,9 +165,9 @@ defmodule Pbft.Client do
   requests to the RSM.
   """
   alias __MODULE__
-  @enforce_keys [:leader, :request_timestamp]
+  @enforce_keys [:primary, :request_timestamp]
   defstruct(
-    leader: nil,
+    primary: nil,
     request_timestamp: nil,
     private_key: nil
   )
@@ -175,12 +175,12 @@ defmodule Pbft.Client do
   @doc """
   Construct a new Pbft Client. This takes an ID of
   any process that is in the RSM. We rely on
-  redirect messages to find the correct leader.
+  redirect messages to find the correct primary.
   """
-  @spec new_client(atom(), binary()) :: %Client{leader: atom()}
+  @spec new_client(atom(), binary()) :: %Client{primary: atom()}
   def new_client(member, private_key) do
     %Client{
-      leader: member,
+      primary: member,
       request_timestamp: 0,
       private_key: private_key
     }
@@ -191,7 +191,7 @@ defmodule Pbft.Client do
   """
   @spec nop(%Client{}) :: {:ok, %Client{}}
   def nop(client) do
-    leader = client.leader
+    primary = client.primary
 
     req = Pbft.ClientMessageRequest.new(whoami, :nop, client.request_timestamp)
 
@@ -199,13 +199,13 @@ defmodule Pbft.Client do
 
     digest = sign_message(req, client.private_key)
 
-    send(leader, {req, digest})
+    send(primary, {req, digest})
 
     :ok
 
     # receive do
-    #   {_, {:redirect, new_leader}} ->
-    #     nop(%{client | leader: new_leader})
+    #   {_, {:redirect, new_primary}} ->
+    #     nop(%{client | primary: new_primary})
 
     #   {_, :ok} ->
     #     {:ok, client}
