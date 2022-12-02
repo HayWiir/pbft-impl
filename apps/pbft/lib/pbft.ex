@@ -21,7 +21,7 @@ defmodule Pbft do
   defstruct(
     # The list of current proceses.
     cluster: nil,
-    current_term: nil,
+    current_view: nil,
     log: nil,
     is_primary: nil,
 
@@ -30,7 +30,6 @@ defmodule Pbft do
 
     # Cryptography
     private_key: nil,
-    public_key: nil,
     cluster_pub_keys: nil,
     client_pub_keys: nil
   )
@@ -41,8 +40,8 @@ defmodule Pbft do
   of this state.
   """
   @spec new_configuration(
-          [atom()],
-          [binary()],
+          tuple(),
+          map(),
           map(),
           binary()
         ) :: %Pbft{}
@@ -57,11 +56,18 @@ defmodule Pbft do
       cluster_pub_keys: cluster_pub_keys,
       client_pub_keys: client_pub_keys,
       private_key: private_key,
-      current_term: 0,
+      current_view: 0,
       log: [],
       queue: :queue.new(),
       is_primary: false
     }
+  end
+
+  #Gets current primary process
+  @spec get_primary(%Pbft{}) :: atom()
+  defp get_primary(state) do
+    index = rem(state.current_view, tuple_size(state.cluster))
+    elem(state.cluster, index)
   end
 
   # Enqueue an item, this **modifies** the state
@@ -97,6 +103,17 @@ defmodule Pbft do
     :crypto.sign(:eddsa, :none, inspect(message), [private_key, :ed25519])
   end
 
+  # Utility function to send a message to all
+  # processes other than the caller. Should only be used by leader.
+  @spec broadcast_to_others(%Pbft{is_primary: true}, any()) :: [boolean()]
+  defp broadcast_to_others(state, message) do
+    me = whoami()
+
+    state.cluster
+    |> Enum.filter(fn pid -> pid != me end)
+    |> Enum.map(fn pid -> send(pid, {message, sign_message(message, state.private_key)}) end)
+  end
+
   @doc """
   make_primary changes process state for a process that
   has just been elected primary.
@@ -110,6 +127,17 @@ defmodule Pbft do
   end
 
   @doc """
+  make_replica changes process state for a process
+  to mark it as a replica.
+  """
+  @spec make_replica(%Pbft{}) :: %Pbft{
+          is_primary: false
+        }
+  def make_replica(state) do
+    %{state | is_primary: false}
+  end
+
+  @doc """
   This function transitions a process that is not currently
   the primary so it is a primary.
   """
@@ -118,6 +146,15 @@ defmodule Pbft do
     # Send initial AppendEntry heartbeat
 
     primary(make_primary(state), %{})
+  end
+
+  @doc """
+  This function transitions a process so it is
+  a replica.
+  """
+  @spec become_replica(%Pbft{}) :: no_return()
+  def become_replica(state) do
+    replica(make_replica(state), nil)
   end
 
   @doc """
@@ -142,13 +179,38 @@ defmodule Pbft do
                operation: operation,
                request_timestamp: request_timestamp
              },
-             state.client_pub_keys[sender]
+             state.client_pub_keys[client_id]
            ) do
           IO.puts("Verified")
         else
           IO.puts("Not Verified")
         end
     end
+  end
+
+  @doc """
+  This function implements the state machine for a process
+  that is currently a replica.
+  """
+  @spec replica(%Pbft{is_primary: false}, any()) :: no_return()
+  def replica(state, extra_state) do
+    receive do
+      {sender,
+       {%Pbft.ClientMessageRequest{
+          client_id: client_id,
+          operation: operation,
+          request_timestamp: request_timestamp
+        }, digest}} ->
+
+        IO.puts("Replica #{whoami} received command from #{sender} ")
+
+        #Forward client message to primary
+        send(get_primary(state), {%Pbft.ClientMessageRequest{
+          client_id: client_id,
+          operation: operation,
+          request_timestamp: request_timestamp
+        }, digest})
+        end
   end
 end
 
