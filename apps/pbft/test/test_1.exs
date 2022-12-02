@@ -28,14 +28,14 @@ defmodule Test1 do
         client_pub_keys,
         a_private
       )
-    
+
     b_config =
       Pbft.new_configuration(
         cluster,
         cluster_pub_keys,
         client_pub_keys,
         b_private
-      )  
+      )
 
     spawn(:a, fn -> Pbft.become_primary(a_config) end)
     spawn(:b, fn -> Pbft.become_replica(b_config) end)

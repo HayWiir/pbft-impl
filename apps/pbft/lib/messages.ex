@@ -105,120 +105,117 @@ end
 #   end
 # end
 
-# defmodule Pbft.AppendRequest do
-#   @moduledoc """
-#   PrePrepare, Prepare and Commit RPCs.
-#   """
-#   alias __MODULE__
+defmodule Pbft.AppendRequest do
+  @moduledoc """
+  PrePrepare, Prepare and Commit RPCs.
+  """
+  alias __MODULE__
 
-#   @enforce_keys [
-#     :type,
-#     :current_view,
-#     :sequence_number
-#   ]
+  @enforce_keys [
+    :type,
+    :current_view,
+    :sequence_number
+  ]
 
-#   defstruct(
-#     type: nil,
-#     current_view: nil,
-#     sequence_number: nil,
-#     message_digest: nil,
-#     message: nil,
-#     replica_id: nil
-#   )
+  defstruct(
+    type: nil,
+    current_view: nil,
+    sequence_number: nil,
+    message_digest: nil,
+    message: nil,
+    replica_id: nil
+  )
 
-#   @doc """
-#   Create a new PrePepare
-#   """
-#   @spec new_prepepare(
-#           non_neg_integer(),
-#           non_neg_integer(),
-#           any(),
-#           any()
-#         ) ::
-#           %AppendRequest{
-#             type: atom(),
-#             current_view: non_neg_integer(),
-#             sequence_number: non_neg_integer(),
-#             message_digest: any(),
-#             current_view: any()
-#           }
+  @doc """
+  Create a new PrePepare
+  """
+  @spec new_prepepare(
+          non_neg_integer(),
+          non_neg_integer(),
+          any()
+        ) ::
+          %AppendRequest{
+            type: atom(),
+            current_view: non_neg_integer(),
+            sequence_number: non_neg_integer(),
+            message_digest: any(),
+            current_view: any()
+          }
 
-#   def new_prepepare(
-#         current_view,
-#         sequence_number,
-#         message_digest,
-#         message
-#       ) do
-#     %AppendRequest{
-#       type: "pre",
-#       current_view: current_view,
-#       sequence_number: sequence_number,
-#       message_digest: message_digest,
-#       current_view: current_view
-#     }
-#   end
+  def new_prepepare(
+        current_view,
+        sequence_number,
+        message_digest
+      ) do
+    %AppendRequest{
+      type: "pre",
+      current_view: current_view,
+      sequence_number: sequence_number,
+      message_digest: message_digest
+    }
+  end
 
-#   @doc """
-#   Create a new Pepare
-#   """
-#   @spec new_pepare(
-#           non_neg_integer(),
-#           non_neg_integer(),
-#           any(),
-#           atom()
-#         ) ::
-#           %AppendRequest{
-#             type: atom(),
-#             current_view: non_neg_integer(),
-#             sequence_number: non_neg_integer(),
-#             message_digest: any(),
-#             replica_id: atom()
-#           }
+  # @doc """
+  # Create a new Pepare
+  # """
+  # @spec new_pepare(
+  #         non_neg_integer(),
+  #         non_neg_integer(),
+  #         any(),
+  #         atom()
+  #       ) ::
+  #         %AppendRequest{
+  #           type: atom(),
+  #           current_view: non_neg_integer(),
+  #           sequence_number: non_neg_integer(),
+  #           message_digest: any(),
+  #           replica_id: atom()
+  #         }
 
-#   def new_prepepare(
-#         current_view,
-#         sequence_number,
-#         message_digest,
-#         replica_id
-#       ) do
-#     %AppendRequest{
-#       type: "prepare",
-#       current_view: current_view,
-#       sequence_number: sequence_number,
-#       message_digest: message_digest,
-#       replica_id: replica_id
-#     }
-#   end
+  # def new_prepepare(
+  #       current_view,
+  #       sequence_number,
+  #       message_digest,
+  #       replica_id
+  #     ) do
+  #   %AppendRequest{
+  #     type: "prepare",
+  #     current_view: current_view,
+  #     sequence_number: sequence_number,
+  #     message_digest: message_digest,
+  #     replica_id: replica_id
+  #   }
+  # end
 
-#   @doc """
-#   Create a new Commit
-#   """
-#   @spec new_commit(
-#           non_neg_integer(),
-#           non_neg_integer(),
-#           any(),
-#           atom()
-#         ) ::
-#           %AppendRequest{
-#             type: atom(),
-#             current_view: non_neg_integer(),
-#             sequence_number: non_neg_integer(),
-#             message_digest: any(),
-#             replica_id: atom()
-#           }
+  # @doc """
+  # Create a new Commit
+  # """
+  # @spec new_commit(
+  #         non_neg_integer(),
+  #         non_neg_integer(),
+  #         any(),
+  #         atom()
+  #       ) ::
+  #         %AppendRequest{
+  #           type: atom(),
+  #           current_view: non_neg_integer(),
+  #           sequence_number: non_neg_integer(),
+  #           message_digest: any(),
+  #           replica_id: atom()
+  #         }
 
-#   def new_commit(
-#         current_view,
-#         sequence_number,
-#         message_digest,
-#         replica_id
-#       ) do
-#     %AppendRequest{
-#       type: "commit",
-#       current_view: current_view,
-#       sequence_number: sequence_number,
-#       message_digest: message_digest,
-#       replica_id: replica_id
-#     }
-#   end
-# end
+  # def new_commit(
+  #       current_view,
+  #       sequence_number,
+  #       message_digest,
+  #       replica_id
+  #     ) do
+  #   %AppendRequest{
+  #     type: "commit",
+  #     current_view: current_view,
+  #     sequence_number: sequence_number,
+  #     message_digest: message_digest,
+  #     replica_id: replica_id
+  #   }
+  # end
+end

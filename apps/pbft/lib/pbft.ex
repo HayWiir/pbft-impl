@@ -23,6 +23,8 @@ defmodule Pbft do
     cluster: nil,
     current_view: nil,
     log: nil,
+    commit_index: nil,
+    next_index: nil,
     is_primary: nil,
 
     # Service State
@@ -58,12 +60,14 @@ defmodule Pbft do
       private_key: private_key,
       current_view: 0,
       log: [],
+      commit_index: 0,
+      next_index: nil,
       queue: :queue.new(),
       is_primary: false
     }
   end
 
-  #Gets current primary process
+  # Gets current primary process
   @spec get_primary(%Pbft{}) :: atom()
   defp get_primary(state) do
     index = rem(state.current_view, tuple_size(state.cluster))
@@ -109,9 +113,9 @@ defmodule Pbft do
   defp broadcast_to_others(state, message) do
     me = whoami()
 
-    state.cluster
+    Tuple.to_list(state.cluster)
     |> Enum.filter(fn pid -> pid != me end)
-    |> Enum.map(fn pid -> send(pid, {message, sign_message(message, state.private_key)}) end)
+    |> Enum.map(fn pid -> send(pid, message) end)
   end
 
   @doc """
@@ -122,7 +126,8 @@ defmodule Pbft do
   def make_primary(state) do
     %{
       state
-      | is_primary: true
+      | is_primary: true,
+        next_index: state.commit_index + 1
     }
   end
 
@@ -169,11 +174,11 @@ defmodule Pbft do
           client_id: client_id,
           operation: operation,
           request_timestamp: request_timestamp
-        }, digest}} ->
+        }, request_mssg_digest}} ->
         IO.puts("Primary #{whoami} Received command from #{sender} ")
 
         if verify_digest(
-             digest,
+             request_mssg_digest,
              %Pbft.ClientMessageRequest{
                client_id: client_id,
                operation: operation,
@@ -181,9 +186,30 @@ defmodule Pbft do
              },
              state.client_pub_keys[client_id]
            ) do
-          IO.puts("Verified")
+          # Broadcast PrePrepare Message
+          message =
+            Pbft.AppendRequest.new_prepepare(
+              state.current_view,
+              state.next_index,
+              request_mssg_digest
+            )
+
+          request_message = %Pbft.ClientMessageRequest{
+            client_id: client_id,
+            operation: operation,
+            request_timestamp: request_timestamp
+          }
+
+          broadcast_to_others(
+            state,
+            {message, sign_message(message, state.private_key), request_message}
+          )
+
+          state = %{state | next_index: state.next_index + 1}
+          primary(state, extra_state)
         else
           IO.puts("Not Verified")
+          primary(state, extra_state)
         end
     end
   end
@@ -201,16 +227,35 @@ defmodule Pbft do
           operation: operation,
           request_timestamp: request_timestamp
         }, digest}} ->
-
         IO.puts("Replica #{whoami} received command from #{sender} ")
 
-        #Forward client message to primary
-        send(get_primary(state), {%Pbft.ClientMessageRequest{
+        # Forward client message to primary
+        send(
+          get_primary(state),
+          {%Pbft.ClientMessageRequest{
+             client_id: client_id,
+             operation: operation,
+             request_timestamp: request_timestamp
+           }, digest}
+        )
+
+        replica(state, extra_state)
+
+      {sender,
+       {%Pbft.AppendRequest{
+          type: "pre",
+          current_view: current_view,
+          sequence_number: sequence_number,
+          message_digest: request_mssg_digest
+        }, digest,
+        %Pbft.ClientMessageRequest{
           client_id: client_id,
           operation: operation,
           request_timestamp: request_timestamp
-        }, digest})
-        end
+        }}} ->
+        IO.puts("Replica #{whoami} received PrePrepare from #{sender} ")
+        replica(state, extra_state)
+    end
   end
 end
 
