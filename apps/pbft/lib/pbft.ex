@@ -81,10 +81,20 @@ defmodule Pbft do
     {ret, %{state | queue: queue}}
   end
 
-  # Verifies a message digest for a given message and public key
+  @doc """
+  Verifies a message digest for a given message and public key
+  """
   @spec verify_digest(binary(), any(), binary()) :: {true | false}
-  defp verify_digest(digest, message, pub_key) do
+  def verify_digest(digest, message, pub_key) do
     :crypto.verify(:eddsa, :none, inspect(message), digest, [pub_key, :ed25519])
+  end
+
+  @doc """
+  Signs a message for a given message and private key
+  """
+  @spec sign_message(any(), binary()) :: binary()
+  def sign_message(message, private_key) do
+    :crypto.sign(:eddsa, :none, inspect(message), [private_key, :ed25519])
   end
 
   @doc """
@@ -145,6 +155,8 @@ end
 defmodule Pbft.Client do
   import Emulation, only: [send: 2, whoami: 0]
 
+  import Pbft, only: [sign_message: 2, verify_digest: 3]
+
   import Kernel,
     except: [spawn: 3, spawn: 1, spawn_link: 1, spawn_link: 3, send: 2]
 
@@ -185,7 +197,7 @@ defmodule Pbft.Client do
 
     client = %{client | request_timestamp: client.request_timestamp + 1}
 
-    digest = :crypto.sign(:eddsa, :none, inspect(req), [client.private_key, :ed25519])
+    digest = sign_message(req, client.private_key)
 
     send(leader, {req, digest})
 
