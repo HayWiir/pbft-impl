@@ -12,14 +12,15 @@ defmodule Test1 do
 
     {a_public, a_private} = :crypto.generate_key(:eddsa, :ed25519)
     {b_public, b_private} = :crypto.generate_key(:eddsa, :ed25519)
+    {c_public, c_private} = :crypto.generate_key(:eddsa, :ed25519)
 
     {client_public, client_private} = :crypto.generate_key(:eddsa, :ed25519)
     {c2_public, c2_private} = :crypto.generate_key(:eddsa, :ed25519)
 
-    cluster_pub_keys = %{:a => a_public, :a => b_public}
+    cluster_pub_keys = %{:a => a_public, :b => b_public, :c => c_public}
     client_pub_keys = %{:client => client_public, :c2 => c2_public}
 
-    cluster = {:a, :b}
+    cluster = {:a, :b, :c}
 
     a_config =
       Pbft.new_configuration(
@@ -37,8 +38,17 @@ defmodule Test1 do
         b_private
       )
 
+    c_config =
+      Pbft.new_configuration(
+        cluster,
+        cluster_pub_keys,
+        client_pub_keys,
+        c_private
+      )
+
     spawn(:a, fn -> Pbft.become_primary(a_config) end)
     spawn(:b, fn -> Pbft.become_replica(b_config) end)
+    spawn(:c, fn -> Pbft.become_replica(b_config) end)
 
     client =
       spawn(:client, fn ->

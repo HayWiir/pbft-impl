@@ -174,11 +174,11 @@ defmodule Pbft do
           client_id: client_id,
           operation: operation,
           request_timestamp: request_timestamp
-        }, request_mssg_digest}} ->
+        }, request_digest}} ->
         IO.puts("Primary #{whoami} Received command from #{sender} ")
 
         if verify_digest(
-             request_mssg_digest,
+             request_digest,
              %Pbft.ClientMessageRequest{
                client_id: client_id,
                operation: operation,
@@ -187,11 +187,11 @@ defmodule Pbft do
              state.client_pub_keys[client_id]
            ) do
           # Broadcast PrePrepare Message
-          message =
+          append_message =
             Pbft.AppendRequest.new_prepepare(
               state.current_view,
               state.next_index,
-              request_mssg_digest
+              request_digest
             )
 
           request_message = %Pbft.ClientMessageRequest{
@@ -202,7 +202,7 @@ defmodule Pbft do
 
           broadcast_to_others(
             state,
-            {message, sign_message(message, state.private_key), request_message}
+            {append_message, sign_message(append_message, state.private_key), request_message}
           )
 
           state = %{state | next_index: state.next_index + 1}
@@ -246,14 +246,35 @@ defmodule Pbft do
           type: "pre",
           current_view: current_view,
           sequence_number: sequence_number,
-          message_digest: request_mssg_digest
-        }, digest,
+          message_digest: request_digest
+        }, append_digest,
         %Pbft.ClientMessageRequest{
           client_id: client_id,
           operation: operation,
           request_timestamp: request_timestamp
         }}} ->
         IO.puts("Replica #{whoami} received PrePrepare from #{sender} ")
+
+        append_mssg = %Pbft.AppendRequest{
+          type: "pre",
+          current_view: current_view,
+          sequence_number: sequence_number,
+          message_digest: request_digest
+        }
+
+        request_mssg = %Pbft.ClientMessageRequest{
+          client_id: client_id,
+          operation: operation,
+          request_timestamp: request_timestamp
+        }
+
+        if verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) &&
+             verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) do
+          IO.puts("Replica #{whoami} Verified PrePrepare from #{sender} ")
+        else
+          IO.puts("Replica #{whoami} Not Verified PrePrepare from #{sender} ")
+        end
+
         replica(state, extra_state)
     end
   end
