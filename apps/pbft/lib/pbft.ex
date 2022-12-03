@@ -59,8 +59,8 @@ defmodule Pbft do
       client_pub_keys: client_pub_keys,
       private_key: private_key,
       current_view: 0,
-      log: [],
-      commit_index: 0,
+      log: %{},
+      commit_index: -1,
       next_index: nil,
       queue: :queue.new(),
       is_primary: false
@@ -92,6 +92,16 @@ defmodule Pbft do
   end
 
   @doc """
+  Add log entries to the log. This adds entries to the beginning
+  of the log, we assume that entries are already correctly ordered
+  (see structural note about log above.).
+  """
+  @spec add_log_entry(%Pbft{}, non_neg_integer(), %Pbft.LogEntry{}) :: %Pbft{}
+  def add_log_entry(state, sequence_number, entry) do
+    %{state | log: Map.put(state.log, sequence_number, entry)}
+  end
+
+  @doc """
   Verifies a message digest for a given message and public key
   """
   @spec verify_digest(binary(), any(), binary()) :: {true | false}
@@ -109,12 +119,11 @@ defmodule Pbft do
 
   # Utility function to send a message to all
   # processes other than the caller. Should only be used by leader.
-  @spec broadcast_to_others(%Pbft{is_primary: true}, any()) :: [boolean()]
-  defp broadcast_to_others(state, message) do
+  @spec broadcast_to_all(%Pbft{is_primary: true}, any()) :: [boolean()]
+  defp broadcast_to_all(state, message) do
     me = whoami()
 
     Tuple.to_list(state.cluster)
-    |> Enum.filter(fn pid -> pid != me end)
     |> Enum.map(fn pid -> send(pid, message) end)
   end
 
@@ -200,7 +209,7 @@ defmodule Pbft do
             request_timestamp: request_timestamp
           }
 
-          broadcast_to_others(
+          broadcast_to_all(
             state,
             {append_message, sign_message(append_message, state.private_key), request_message}
           )
@@ -211,6 +220,55 @@ defmodule Pbft do
           IO.puts("Not Verified")
           primary(state, extra_state)
         end
+      
+        
+        {sender,
+        {%Pbft.AppendRequest{
+           type: "pre",
+           current_view: append_view,
+           sequence_number: sequence_number,
+           message_digest: request_digest
+         }, append_digest,
+         %Pbft.ClientMessageRequest{
+           client_id: client_id,
+           operation: operation,
+           request_timestamp: request_timestamp
+         }}} ->
+         IO.puts("Primary #{whoami} received PrePrepare from #{sender} ")
+ 
+         append_mssg = %Pbft.AppendRequest{
+           type: "pre",
+           current_view: append_view,
+           sequence_number: sequence_number,
+           message_digest: request_digest
+         }
+ 
+         request_mssg = %Pbft.ClientMessageRequest{
+           client_id: client_id,
+           operation: operation,
+           request_timestamp: request_timestamp
+         }
+ 
+         if verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) &&
+              verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) &&
+              append_view == state.current_view do
+           IO.puts("Primary #{whoami} Verified PrePrepare from #{sender} ")
+ 
+           if Map.has_key?(state.log, sequence_number) and state.log[sequence_number].view == append_view do
+             IO.puts("Received PrePrepare present in #{whoami} ")
+           else
+             {op, arg} = operation
+             log_entry = Pbft.LogEntry.new(sequence_number, state.current_view, client_id, op, arg)
+             state = add_log_entry(state, sequence_number, log_entry)
+             IO.puts("Primary #{whoami} log: #{inspect(state.log)} ")
+             primary(state, extra_state)
+           end
+         else
+           IO.puts("Primary #{whoami} Not Verified PrePrepare from #{sender} ")
+         end
+ 
+         primary(state, extra_state)
+          
     end
   end
 
@@ -244,7 +302,7 @@ defmodule Pbft do
       {sender,
        {%Pbft.AppendRequest{
           type: "pre",
-          current_view: current_view,
+          current_view: append_view,
           sequence_number: sequence_number,
           message_digest: request_digest
         }, append_digest,
@@ -257,7 +315,7 @@ defmodule Pbft do
 
         append_mssg = %Pbft.AppendRequest{
           type: "pre",
-          current_view: current_view,
+          current_view: append_view,
           sequence_number: sequence_number,
           message_digest: request_digest
         }
@@ -269,8 +327,19 @@ defmodule Pbft do
         }
 
         if verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) &&
-             verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) do
+             verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) &&
+             append_view == state.current_view do
           IO.puts("Replica #{whoami} Verified PrePrepare from #{sender} ")
+
+          if Map.has_key?(state.log, sequence_number) and state.log[sequence_number].view == append_view do
+            IO.puts("Received PrePrepare present in #{whoami} ")
+          else
+            {op, arg} = operation
+            log_entry = Pbft.LogEntry.new(sequence_number, state.current_view, client_id, op, arg)
+            state = add_log_entry(state, sequence_number, log_entry)
+            IO.puts("Replica #{whoami} log: #{inspect(state.log)} ")
+            replica(state, extra_state)
+          end
         else
           IO.puts("Replica #{whoami} Not Verified PrePrepare from #{sender} ")
         end
@@ -321,7 +390,7 @@ defmodule Pbft.Client do
   def nop(client) do
     primary = client.primary
 
-    req = Pbft.ClientMessageRequest.new(whoami, :nop, client.request_timestamp)
+    req = Pbft.ClientMessageRequest.new(whoami, {:nop, nil}, client.request_timestamp)
 
     client = %{client | request_timestamp: client.request_timestamp + 1}
 

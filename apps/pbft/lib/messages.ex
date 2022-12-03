@@ -1,3 +1,42 @@
+defmodule Pbft.LogEntry do
+  @moduledoc """
+  Log entry for Pbft implementation.
+  """
+  alias __MODULE__
+  @enforce_keys [:sequence_number, :view]
+  defstruct(
+    sequence_number: nil,
+    view: nil,
+    operation: nil,
+    requester: nil,
+    argument: nil,
+    is_committed: nil
+  )
+
+  @doc """
+  Return a new LogEntry
+  """
+  @spec new(non_neg_integer(), non_neg_integer(), atom(), atom(), any()) ::
+          %LogEntry{
+            sequence_number: non_neg_integer(),
+            view: non_neg_integer(),
+            requester: atom() | pid(),
+            operation: :enq,
+            argument: any(),
+            is_committed: boolean()
+          }
+  def new(sequence_number, view, requester, operation, item \\ nil) do
+    %LogEntry{
+      sequence_number: sequence_number,
+      view: view,
+      operation: operation,
+      requester: requester,
+      argument: item,
+      is_committed: false
+    }
+  end
+end
+
 defmodule Pbft.ClientMessageRequest do
   @moduledoc """
   Client Message RPC request.
@@ -155,37 +194,37 @@ defmodule Pbft.AppendRequest do
     }
   end
 
-  # @doc """
-  # Create a new Pepare
-  # """
-  # @spec new_pepare(
-  #         non_neg_integer(),
-  #         non_neg_integer(),
-  #         any(),
-  #         atom()
-  #       ) ::
-  #         %AppendRequest{
-  #           type: atom(),
-  #           current_view: non_neg_integer(),
-  #           sequence_number: non_neg_integer(),
-  #           message_digest: any(),
-  #           replica_id: atom()
-  #         }
+  @doc """
+  Create a new Pepare
+  """
+  @spec new_pepare(
+          non_neg_integer(),
+          non_neg_integer(),
+          any(),
+          atom()
+        ) ::
+          %AppendRequest{
+            type: atom(),
+            current_view: non_neg_integer(),
+            sequence_number: non_neg_integer(),
+            message_digest: any(),
+            replica_id: atom()
+          }
 
-  # def new_prepepare(
-  #       current_view,
-  #       sequence_number,
-  #       message_digest,
-  #       replica_id
-  #     ) do
-  #   %AppendRequest{
-  #     type: "prepare",
-  #     current_view: current_view,
-  #     sequence_number: sequence_number,
-  #     message_digest: message_digest,
-  #     replica_id: replica_id
-  #   }
-  # end
+  def new_pepare(
+        current_view,
+        sequence_number,
+        message_digest,
+        replica_id
+      ) do
+    %AppendRequest{
+      type: "prepare",
+      current_view: current_view,
+      sequence_number: sequence_number,
+      message_digest: message_digest,
+      replica_id: replica_id
+    }
+  end
 
   # @doc """
   # Create a new Commit
