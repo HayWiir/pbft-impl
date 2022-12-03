@@ -185,16 +185,17 @@ defmodule Pbft do
           request_timestamp: request_timestamp
         }, request_digest}} ->
         IO.puts("Replica #{whoami} received command from #{sender} ")
-         
+
         if state.is_primary do
-          if verify_digest(request_digest,
-              %Pbft.ClientMessageRequest{
-                client_id: client_id,
-                operation: operation,
-                request_timestamp: request_timestamp
-              },
-              state.client_pub_keys[client_id]
-            ) do
+          if verify_digest(
+               request_digest,
+               %Pbft.ClientMessageRequest{
+                 client_id: client_id,
+                 operation: operation,
+                 request_timestamp: request_timestamp
+               },
+               state.client_pub_keys[client_id]
+             ) do
             # Broadcast PrePrepare Message
             append_message =
               Pbft.AppendRequest.new_prepepare(
@@ -220,16 +221,15 @@ defmodule Pbft do
             IO.puts("Not Verified")
             replica(state, extra_state)
           end
-
         else
           # Forward client message to primary
           send(
             get_primary(state),
             {%Pbft.ClientMessageRequest{
-              client_id: client_id,
-              operation: operation,
-              request_timestamp: request_timestamp
-            }, request_digest}
+               client_id: client_id,
+               operation: operation,
+               request_timestamp: request_timestamp
+             }, request_digest}
           )
 
           replica(state, extra_state)
