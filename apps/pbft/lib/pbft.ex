@@ -159,7 +159,7 @@ defmodule Pbft do
   def become_primary(state) do
     # Send initial AppendEntry heartbeat
 
-    primary(make_primary(state), %{})
+    replica(make_primary(state), %{})
   end
 
   @doc """
@@ -173,110 +173,9 @@ defmodule Pbft do
 
   @doc """
   This function implements the state machine for a process
-  that is currently the primary.
-  """
-  @spec primary(%Pbft{is_primary: true}, any()) :: no_return()
-  def primary(state, extra_state) do
-    receive do
-      {sender,
-       {%Pbft.ClientMessageRequest{
-          client_id: client_id,
-          operation: operation,
-          request_timestamp: request_timestamp
-        }, request_digest}} ->
-        IO.puts("Primary #{whoami} Received command from #{sender} ")
-
-        if verify_digest(
-             request_digest,
-             %Pbft.ClientMessageRequest{
-               client_id: client_id,
-               operation: operation,
-               request_timestamp: request_timestamp
-             },
-             state.client_pub_keys[client_id]
-           ) do
-          # Broadcast PrePrepare Message
-          append_message =
-            Pbft.AppendRequest.new_prepepare(
-              state.current_view,
-              state.next_index,
-              request_digest
-            )
-
-          request_message = %Pbft.ClientMessageRequest{
-            client_id: client_id,
-            operation: operation,
-            request_timestamp: request_timestamp
-          }
-
-          broadcast_to_all(
-            state,
-            {append_message, sign_message(append_message, state.private_key), request_message}
-          )
-
-          state = %{state | next_index: state.next_index + 1}
-          primary(state, extra_state)
-        else
-          IO.puts("Not Verified")
-          primary(state, extra_state)
-        end
-      
-        
-        {sender,
-        {%Pbft.AppendRequest{
-           type: "pre",
-           current_view: append_view,
-           sequence_number: sequence_number,
-           message_digest: request_digest
-         }, append_digest,
-         %Pbft.ClientMessageRequest{
-           client_id: client_id,
-           operation: operation,
-           request_timestamp: request_timestamp
-         }}} ->
-         IO.puts("Primary #{whoami} received PrePrepare from #{sender} ")
- 
-         append_mssg = %Pbft.AppendRequest{
-           type: "pre",
-           current_view: append_view,
-           sequence_number: sequence_number,
-           message_digest: request_digest
-         }
- 
-         request_mssg = %Pbft.ClientMessageRequest{
-           client_id: client_id,
-           operation: operation,
-           request_timestamp: request_timestamp
-         }
- 
-         if verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) &&
-              verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) &&
-              append_view == state.current_view do
-           IO.puts("Primary #{whoami} Verified PrePrepare from #{sender} ")
- 
-           if Map.has_key?(state.log, sequence_number) and state.log[sequence_number].view == append_view do
-             IO.puts("Received PrePrepare present in #{whoami} ")
-           else
-             {op, arg} = operation
-             log_entry = Pbft.LogEntry.new(sequence_number, state.current_view, client_id, op, arg)
-             state = add_log_entry(state, sequence_number, log_entry)
-             IO.puts("Primary #{whoami} log: #{inspect(state.log)} ")
-             primary(state, extra_state)
-           end
-         else
-           IO.puts("Primary #{whoami} Not Verified PrePrepare from #{sender} ")
-         end
- 
-         primary(state, extra_state)
-          
-    end
-  end
-
-  @doc """
-  This function implements the state machine for a process
   that is currently a replica.
   """
-  @spec replica(%Pbft{is_primary: false}, any()) :: no_return()
+  @spec replica(%Pbft{}, any()) :: no_return()
   def replica(state, extra_state) do
     receive do
       {sender,
@@ -284,20 +183,57 @@ defmodule Pbft do
           client_id: client_id,
           operation: operation,
           request_timestamp: request_timestamp
-        }, digest}} ->
+        }, request_digest}} ->
         IO.puts("Replica #{whoami} received command from #{sender} ")
+         
+        if state.is_primary do
+          if verify_digest(request_digest,
+              %Pbft.ClientMessageRequest{
+                client_id: client_id,
+                operation: operation,
+                request_timestamp: request_timestamp
+              },
+              state.client_pub_keys[client_id]
+            ) do
+            # Broadcast PrePrepare Message
+            append_message =
+              Pbft.AppendRequest.new_prepepare(
+                state.current_view,
+                state.next_index,
+                request_digest
+              )
 
-        # Forward client message to primary
-        send(
-          get_primary(state),
-          {%Pbft.ClientMessageRequest{
-             client_id: client_id,
-             operation: operation,
-             request_timestamp: request_timestamp
-           }, digest}
-        )
+            request_message = %Pbft.ClientMessageRequest{
+              client_id: client_id,
+              operation: operation,
+              request_timestamp: request_timestamp
+            }
 
-        replica(state, extra_state)
+            broadcast_to_all(
+              state,
+              {append_message, sign_message(append_message, state.private_key), request_message}
+            )
+
+            state = %{state | next_index: state.next_index + 1}
+            replica(state, extra_state)
+          else
+            IO.puts("Not Verified")
+            replica(state, extra_state)
+          end
+
+        else
+          # Forward client message to primary
+          send(
+            get_primary(state),
+            {%Pbft.ClientMessageRequest{
+              client_id: client_id,
+              operation: operation,
+              request_timestamp: request_timestamp
+            }, request_digest}
+          )
+
+          replica(state, extra_state)
+        end
 
       {sender,
        {%Pbft.AppendRequest{
