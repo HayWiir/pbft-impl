@@ -8,19 +8,20 @@ defmodule Test1 do
 
   test "Nothing crashes during startup and heartbeats" do
     Emulation.init()
-    Emulation.append_fuzzers([Fuzzers.delay(2)])
+    Emulation.append_fuzzers([Fuzzers.delay(0)])
 
     {a_public, a_private} = :crypto.generate_key(:eddsa, :ed25519)
     {b_public, b_private} = :crypto.generate_key(:eddsa, :ed25519)
     {c_public, c_private} = :crypto.generate_key(:eddsa, :ed25519)
+    {d_public, d_private} = :crypto.generate_key(:eddsa, :ed25519)
 
     {client_public, client_private} = :crypto.generate_key(:eddsa, :ed25519)
     {c2_public, c2_private} = :crypto.generate_key(:eddsa, :ed25519)
 
-    cluster_pub_keys = %{:a => a_public, :b => b_public, :c => c_public}
+    cluster_pub_keys = %{:a => a_public, :b => b_public, :c => c_public, :d => d_public}
     client_pub_keys = %{:client => client_public, :c2 => c2_public}
 
-    cluster = {:a, :b, :c}
+    cluster = {:a, :b, :c, :d}
 
     a_config =
       Pbft.new_configuration(
@@ -45,10 +46,19 @@ defmodule Test1 do
         client_pub_keys,
         c_private
       )
+    
+    d_config =
+      Pbft.new_configuration(
+        cluster,
+        cluster_pub_keys,
+        client_pub_keys,
+        d_private
+      )  
 
     spawn(:a, fn -> Pbft.become_primary(a_config) end)
     spawn(:b, fn -> Pbft.become_replica(b_config) end)
-    spawn(:c, fn -> Pbft.become_replica(b_config) end)
+    spawn(:c, fn -> Pbft.become_replica(c_config) end)
+    spawn(:d, fn -> Pbft.become_replica(d_config) end)
 
     client =
       spawn(:client, fn ->
@@ -58,7 +68,7 @@ defmodule Test1 do
 
         receive do
         after
-          5_000 -> true
+          1_000 -> true
         end
       end)
 

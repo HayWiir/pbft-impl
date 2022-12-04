@@ -10,28 +10,37 @@ defmodule Pbft.LogEntry do
     operation: nil,
     requester: nil,
     argument: nil,
+    request_digest: nil,
+    prepared_count: nil,
+    commited_count: nil,
     is_committed: nil
   )
 
   @doc """
   Return a new LogEntry
   """
-  @spec new(non_neg_integer(), non_neg_integer(), atom(), atom(), any()) ::
+  @spec new(non_neg_integer(), non_neg_integer(), atom(), atom(), any(), binary()) ::
           %LogEntry{
             sequence_number: non_neg_integer(),
             view: non_neg_integer(),
             requester: atom() | pid(),
             operation: :enq,
             argument: any(),
+            request_digest: binary(),
+            prepared_count: non_neg_integer(),
+            commited_count: non_neg_integer(),
             is_committed: boolean()
           }
-  def new(sequence_number, view, requester, operation, item \\ nil) do
+  def new(sequence_number, view, requester, operation, item \\ nil, request_digest) do
     %LogEntry{
       sequence_number: sequence_number,
       view: view,
       operation: operation,
       requester: requester,
       argument: item,
+      request_digest: request_digest,
+      prepared_count: 0,
+      commited_count: 0,
       is_committed: false
     }
   end
@@ -226,35 +235,35 @@ defmodule Pbft.AppendRequest do
     }
   end
 
-  # @doc """
-  # Create a new Commit
-  # """
-  # @spec new_commit(
-  #         non_neg_integer(),
-  #         non_neg_integer(),
-  #         any(),
-  #         atom()
-  #       ) ::
-  #         %AppendRequest{
-  #           type: atom(),
-  #           current_view: non_neg_integer(),
-  #           sequence_number: non_neg_integer(),
-  #           message_digest: any(),
-  #           replica_id: atom()
-  #         }
+  @doc """
+  Create a new Commit
+  """
+  @spec new_commit(
+          non_neg_integer(),
+          non_neg_integer(),
+          any(),
+          atom()
+        ) ::
+          %AppendRequest{
+            type: atom(),
+            current_view: non_neg_integer(),
+            sequence_number: non_neg_integer(),
+            message_digest: any(),
+            replica_id: atom()
+          }
 
-  # def new_commit(
-  #       current_view,
-  #       sequence_number,
-  #       message_digest,
-  #       replica_id
-  #     ) do
-  #   %AppendRequest{
-  #     type: "commit",
-  #     current_view: current_view,
-  #     sequence_number: sequence_number,
-  #     message_digest: message_digest,
-  #     replica_id: replica_id
-  #   }
-  # end
+  def new_commit(
+        current_view,
+        sequence_number,
+        message_digest,
+        replica_id
+      ) do
+    %AppendRequest{
+      type: "commit",
+      current_view: current_view,
+      sequence_number: sequence_number,
+      message_digest: message_digest,
+      replica_id: replica_id
+    }
+  end
 end

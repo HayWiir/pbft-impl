@@ -26,6 +26,7 @@ defmodule Pbft do
     commit_index: nil,
     next_index: nil,
     is_primary: nil,
+    max_failures: nil,
 
     # Service State
     queue: nil,
@@ -63,7 +64,8 @@ defmodule Pbft do
       commit_index: -1,
       next_index: nil,
       queue: :queue.new(),
-      is_primary: false
+      is_primary: false,
+      max_failures: div(tuple_size(cluster), 3)
     }
   end
 
@@ -262,18 +264,21 @@ defmodule Pbft do
           request_timestamp: request_timestamp
         }
 
-        if verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) &&
+        if sender == get_primary(state) &&
+             verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) &&
              verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) &&
              append_view == state.current_view do
-          IO.puts("Replica #{whoami} Verified PrePrepare from #{sender} ")
 
           if Map.has_key?(state.log, sequence_number) and state.log[sequence_number].view == append_view do
             IO.puts("Received PrePrepare present in #{whoami} ")
           else
             {op, arg} = operation
-            log_entry = Pbft.LogEntry.new(sequence_number, state.current_view, client_id, op, arg)
+            log_entry = Pbft.LogEntry.new(sequence_number, state.current_view, client_id, op, arg, request_digest)
             state = add_log_entry(state, sequence_number, log_entry)
-            IO.puts("Replica #{whoami} log: #{inspect(state.log)} ")
+
+            prepare_message = Pbft.AppendRequest.new_pepare(state.current_view, sequence_number, request_digest, whoami)
+            broadcast_to_all(state, {prepare_message, sign_message(prepare_message, state.private_key)})
+
             replica(state, extra_state)
           end
         else
@@ -281,6 +286,46 @@ defmodule Pbft do
         end
 
         replica(state, extra_state)
+
+      {sender,
+       {%Pbft.AppendRequest{
+          type: "prepare",
+          current_view: current_view,
+          sequence_number: sequence_number,
+          message_digest: request_digest,
+          replica_id: replica_id
+        }, append_digest}} ->
+        append_mssg = %Pbft.AppendRequest{
+          type: "prepare",
+          current_view: current_view,
+          sequence_number: sequence_number,
+          message_digest: request_digest,
+          replica_id: replica_id
+        }
+
+        if verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) &&
+             Map.has_key?(state.log, sequence_number) &&
+             state.log[sequence_number].view == current_view &&
+             state.log[sequence_number].request_digest == request_digest do
+          IO.puts("Replica #{whoami}  Verified Prepare from #{sender} \n")
+
+          # Add prepared count
+          new_log_entry = %{state.log[sequence_number] | prepared_count: state.log[sequence_number].prepared_count + 1}
+          state = %{state | log: %{state.log | sequence_number => new_log_entry}}
+
+          if state.log[sequence_number].prepared_count >= 2*state.max_failures do
+            IO.puts("Replica #{whoami} log: #{inspect(state.log)} \n")
+          end
+
+          replica(state, extra_state)
+        else
+          IO.puts("Replica #{whoami}  Failed Prepare from #{sender} ")
+          replica(state, extra_state)
+        end
+      
+      {sender, :send_log} ->
+        send(sender, state.log)
+        replica(state, extra_state)  
     end
   end
 end
