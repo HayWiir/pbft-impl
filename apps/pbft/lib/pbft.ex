@@ -268,7 +268,6 @@ defmodule Pbft do
              verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) &&
              verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) &&
              append_view == state.current_view do
-
           if Map.has_key?(state.log, sequence_number) and state.log[sequence_number].view == append_view do
             IO.puts("Received PrePrepare present in #{whoami} ")
           else
@@ -313,7 +312,7 @@ defmodule Pbft do
           new_log_entry = %{state.log[sequence_number] | prepared_count: state.log[sequence_number].prepared_count + 1}
           state = %{state | log: %{state.log | sequence_number => new_log_entry}}
 
-          if state.log[sequence_number].prepared_count >= 2*state.max_failures do
+          if state.log[sequence_number].prepared_count >= 2 * state.max_failures do
             IO.puts("Replica #{whoami} log: #{inspect(state.log)} \n")
           end
 
@@ -322,10 +321,10 @@ defmodule Pbft do
           IO.puts("Replica #{whoami}  Failed Prepare from #{sender} ")
           replica(state, extra_state)
         end
-      
+
       {sender, :send_log} ->
         send(sender, state.log)
-        replica(state, extra_state)  
+        replica(state, extra_state)
     end
   end
 end
