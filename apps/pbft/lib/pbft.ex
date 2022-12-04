@@ -1,3 +1,5 @@
+# TODO: Implement client Tstamp filter
+
 defmodule Pbft do
   @moduledoc """
   An implementation of the Pbft consensus protocol.
@@ -91,6 +93,71 @@ defmodule Pbft do
   defp dequeue(state) do
     {ret, queue} = :queue.out(state.queue)
     {ret, %{state | queue: queue}}
+  end
+
+  @doc """
+  Commit a log entry, advancing the state machine. This
+  function returns a tuple:
+  * The first element is {requester, return value}. Your
+    implementation should ensure that the replica who committed
+    the log entry sends the return value to the requester.
+  * The second element is the updated state.
+  """
+  @spec commit_log_entry(%Pbft{}, %Pbft.LogEntry{}) ::
+          {{atom() | pid(), :ok | :empty | {:value, any()}, non_neg_integer()}, %Pbft{}}
+  def commit_log_entry(state, entry) do
+    case entry do
+      %Pbft.LogEntry{operation: :nop, requester: r, sequence_number: i} ->
+        {{r, :ok, entry.request_timestamp}, %{state | commit_index: i}}
+
+      %Pbft.LogEntry{operation: :enq, requester: r, argument: e, sequence_number: i} ->
+        {{r, :ok, entry.request_timestamp}, %{enqueue(state, e) | commit_index: i}}
+
+      %Pbft.LogEntry{operation: :deq, requester: r, sequence_number: i} ->
+        {ret, state} = dequeue(state)
+        {{r, ret, entry.request_timestamp}, %{state | commit_index: i}}
+
+      %Pbft.LogEntry{} ->
+        raise "Log entry with an unknown operation: maybe an empty entry?"
+
+      _ ->
+        raise "Attempted to commit something that is not a log entry."
+    end
+  end
+
+  @doc """
+  Commit log at sequence_number.
+  """
+  @spec commit_log_index(%Pbft{}, non_neg_integer()) ::
+          {:noentry | {atom(), :ok | :empty | {:value, any()}}, %Pbft{}}
+  def commit_log_index(state, sequence_number) do
+    if Map.has_key?(state.log, sequence_number) do
+      commit_log_entry(state, state.log[sequence_number])
+    else
+      {:noentry, state}
+    end
+  end
+
+  @doc """
+  Commits all committed log entries until first entry that is uncommitted.
+  """
+  @spec commit_log(%Pbft{}) :: {%Pbft{}}
+  def commit_log(state) do
+    if Map.has_key?(state.log, state.commit_index + 1) and
+         state.log[state.commit_index + 1].is_committed do
+      {{client, result, request_timestamp}, state} = commit_log_index(state, state.commit_index + 1)
+
+      # send(client, result) TODO ClientResponse
+      response = Pbft.ClientMessageResponse.new(state.current_view, client, whoami, result, request_timestamp)
+
+      send(client, {response, sign_message(response, state.private_key)})
+
+      IO.puts("#{whoami} committed log entry #{state.commit_index} with response #{inspect({client, result})}")
+
+      commit_log(state)
+    else
+      state
+    end
   end
 
   @doc """
@@ -272,7 +339,7 @@ defmodule Pbft do
             IO.puts("Received PrePrepare present in #{whoami} ")
           else
             {op, arg} = operation
-            log_entry = Pbft.LogEntry.new(sequence_number, state.current_view, client_id, op, arg, request_digest)
+            log_entry = Pbft.LogEntry.new(sequence_number, state.current_view, client_id, request_timestamp, op, arg, request_digest)
             state = add_log_entry(state, sequence_number, log_entry)
 
             prepare_message = Pbft.AppendRequest.new_pepare(state.current_view, sequence_number, request_digest, whoami)
@@ -312,13 +379,62 @@ defmodule Pbft do
           new_log_entry = %{state.log[sequence_number] | prepared_count: state.log[sequence_number].prepared_count + 1}
           state = %{state | log: %{state.log | sequence_number => new_log_entry}}
 
-          if state.log[sequence_number].prepared_count >= 2 * state.max_failures do
+          if state.log[sequence_number].prepared_count == 2 * state.max_failures + 1 do
             IO.puts("Replica #{whoami} log: #{inspect(state.log)} \n")
+
+            # Broadcast commit messages
+            commit_message = Pbft.AppendRequest.new_commit(state.current_view, sequence_number, request_digest, whoami)
+            broadcast_to_all(state, {commit_message, sign_message(commit_message, state.private_key)})
+            replica(state, extra_state)
           end
 
           replica(state, extra_state)
         else
           IO.puts("Replica #{whoami}  Failed Prepare from #{sender} ")
+          replica(state, extra_state)
+        end
+
+      {sender,
+       {%Pbft.AppendRequest{
+          type: "commit",
+          current_view: current_view,
+          sequence_number: sequence_number,
+          message_digest: request_digest,
+          replica_id: replica_id
+        }, append_digest}} ->
+        append_mssg = %Pbft.AppendRequest{
+          type: "commit",
+          current_view: current_view,
+          sequence_number: sequence_number,
+          message_digest: request_digest,
+          replica_id: replica_id
+        }
+
+        if verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) &&
+             Map.has_key?(state.log, sequence_number) &&
+             state.log[sequence_number].view == current_view &&
+             state.log[sequence_number].request_digest == request_digest do
+          IO.puts("Replica #{whoami}  Verified Commit from #{sender} \n")
+
+          # Add committed count
+          new_log_entry = %{state.log[sequence_number] | commited_count: state.log[sequence_number].commited_count + 1}
+          state = %{state | log: %{state.log | sequence_number => new_log_entry}}
+
+          if state.log[sequence_number].commited_count == 2 * state.max_failures + 1 do
+            # Set committed
+            new_log_entry = %{state.log[sequence_number] | is_committed: true}
+            state = %{state | log: %{state.log | sequence_number => new_log_entry}}
+            IO.puts("Replica #{whoami} log: #{inspect(state.log)} \n")
+
+            # Call commit_log function
+            state = commit_log(state)
+
+            replica(state, extra_state)
+          end
+
+          replica(state, extra_state)
+        else
+          IO.puts("Replica #{whoami}  Failed Commit from #{sender} ")
           replica(state, extra_state)
         end
 
@@ -346,7 +462,9 @@ defmodule Pbft.Client do
   defstruct(
     primary: nil,
     request_timestamp: nil,
-    private_key: nil
+    private_key: nil,
+    cluster_pub_keys: nil,
+    max_failures: nil
   )
 
   @doc """
@@ -354,38 +472,89 @@ defmodule Pbft.Client do
   any process that is in the RSM. We rely on
   redirect messages to find the correct primary.
   """
-  @spec new_client(atom(), binary()) :: %Client{primary: atom()}
-  def new_client(member, private_key) do
+  @spec new_client(atom(), binary(), map()) :: %Client{primary: atom()}
+  def new_client(member, private_key, cluster_pub_keys) do
     %Client{
       primary: member,
       request_timestamp: 0,
-      private_key: private_key
+      private_key: private_key,
+      cluster_pub_keys: cluster_pub_keys,
+      max_failures: div(map_size(cluster_pub_keys), 3)
     }
+  end
+
+  @doc """
+  Send a enq request to the RSM.
+  """
+  @spec enq(%Client{}, any()) :: {:ok, %Client{}}
+  def enq(state, item) do
+    req = Pbft.ClientMessageRequest.new(whoami, {:enq, item}, state.request_timestamp)
+    state = %{state | request_timestamp: state.request_timestamp + 1}
+    send(state.primary, {req, sign_message(req, state.private_key)})
+
+    client(state, %{resp: 0})
+  end
+
+  @doc """
+  Send a deq request to the RSM.
+  """
+  @spec deq(%Client{}) :: {:empty | {:value, any()}, %Client{}}
+  def deq(state) do
+    req = Pbft.ClientMessageRequest.new(whoami, {:deq, nil}, state.request_timestamp)
+    state = %{state | request_timestamp: state.request_timestamp + 1}
+    send(state.primary, {req, sign_message(req, state.private_key)})
+
+    client(state, %{resp: 0})
   end
 
   @doc """
   Send a nop request to the RSM.
   """
   @spec nop(%Client{}) :: {:ok, %Client{}}
-  def nop(client) do
-    primary = client.primary
+  def nop(state) do
+    req = Pbft.ClientMessageRequest.new(whoami, {:nop, nil}, state.request_timestamp)
+    state = %{state | request_timestamp: state.request_timestamp + 1}
+    send(state.primary, {req, sign_message(req, state.private_key)})
 
-    req = Pbft.ClientMessageRequest.new(whoami, {:nop, nil}, client.request_timestamp)
+    client(state, %{resp: 0})
+  end
 
-    client = %{client | request_timestamp: client.request_timestamp + 1}
+  @doc """
+  This function implements the state machine for a client.
+  """
+  @spec client(%Client{}, any()) ::  {:empty | {:value, any()} | :ok, %Client{}}
+  def client(state, extra_state) do
+    receive do
+      {sender,
+       {%Pbft.ClientMessageResponse{
+          current_view: current_view,
+          client_id: client_id,
+          replica_id: replica_id,
+          result: result,
+          request_timestamp: request_timestamp
+        }, response_digest}} ->
 
-    digest = sign_message(req, client.private_key)
+        response_mssg = %Pbft.ClientMessageResponse{
+          current_view: current_view,
+          client_id: client_id,
+          replica_id: replica_id,
+          result: result,
+          request_timestamp: request_timestamp
+        }
 
-    send(primary, {req, digest})
+        if verify_digest(response_digest, response_mssg, state.cluster_pub_keys[sender]) &&
+             request_timestamp == state.request_timestamp - 1 do
+          extra_state = %{extra_state | resp: extra_state.resp + 1}
+          IO.puts("Client #{whoami} response #{inspect(response_mssg)} ")
 
-    :ok
-
-    # receive do
-    #   {_, {:redirect, new_primary}} ->
-    #     nop(%{client | primary: new_primary})
-
-    #   {_, :ok} ->
-    #     {:ok, client}
-    # end
+          if extra_state.resp == state.max_failures + 1 do
+            {result, state}
+          else
+            client(state, extra_state)
+          end
+        else
+          client(state, extra_state)
+        end
+    end
   end
 end

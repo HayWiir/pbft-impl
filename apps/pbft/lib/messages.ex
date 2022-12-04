@@ -9,6 +9,7 @@ defmodule Pbft.LogEntry do
     view: nil,
     operation: nil,
     requester: nil,
+    request_timestamp: nil,
     argument: nil,
     request_digest: nil,
     prepared_count: nil,
@@ -19,11 +20,12 @@ defmodule Pbft.LogEntry do
   @doc """
   Return a new LogEntry
   """
-  @spec new(non_neg_integer(), non_neg_integer(), atom(), atom(), any(), binary()) ::
+  @spec new(non_neg_integer(), non_neg_integer(), atom(), non_neg_integer(), atom(), any(), binary()) ::
           %LogEntry{
             sequence_number: non_neg_integer(),
             view: non_neg_integer(),
             requester: atom() | pid(),
+            request_timestamp: non_neg_integer(),
             operation: :enq,
             argument: any(),
             request_digest: binary(),
@@ -31,12 +33,13 @@ defmodule Pbft.LogEntry do
             commited_count: non_neg_integer(),
             is_committed: boolean()
           }
-  def new(sequence_number, view, requester, operation, item \\ nil, request_digest) do
+  def new(sequence_number, view, requester, request_timestamp, operation, item \\ nil, request_digest) do
     %LogEntry{
       sequence_number: sequence_number,
       view: view,
       operation: operation,
       requester: requester,
+      request_timestamp: request_timestamp,
       argument: item,
       request_digest: request_digest,
       prepared_count: 0,
@@ -93,65 +96,65 @@ defmodule Pbft.ClientMessageRequest do
   end
 end
 
-# defmodule Pbft.ClientMessageResponse do
-#   @moduledoc """
-#   Client Message RPC response.
-#   Sent by replicas to client.
-#   """
-#   alias __MODULE__
+defmodule Pbft.ClientMessageResponse do
+  @moduledoc """
+  Client Message RPC response.
+  Sent by replicas to client.
+  """
+  alias __MODULE__
 
-#   # Require that any ClientMessageResponse contains
-#   # the following.
-#   @enforce_keys [
-#     :current_view,
-#     :client_id,
-#     :replica_id,
-#     :result,
-#     :request_timestamp
-#   ]
+  # Require that any ClientMessageResponse contains
+  # the following.
+  @enforce_keys [
+    :current_view,
+    :client_id,
+    :replica_id,
+    :result,
+    :request_timestamp
+  ]
 
-#   defstruct(
-#     current_view: nil,
-#     client_id: nil,
-#     replica_id: nil,
-#     result: nil,
-#     request_timestamp: nil
-#   )
+  defstruct(
+    current_view: nil,
+    client_id: nil,
+    replica_id: nil,
+    result: nil,
+    request_timestamp: nil
+  )
 
-#   @doc """
-#   Create a new ClientMessageResponse
-#   """
-#   @spec new(
-#           non_neg_integer(),
-#           atom(),
-#           atom(),
-#           any(),
-#           non_neg_integer()
-#         ) ::
-#           %ClientMessageResponse{
-#             current_view: non_neg_integer(),
-#             client_id: atom(),
-#             replica_id: atom(),
-#             result: any(),
-#             request_timestamp: non_neg_integer()
-#           }
+  @doc """
+  Create a new ClientMessageResponse
+  """
+  @spec new(
+          non_neg_integer(),
+          atom(),
+          atom(),
+          any(),
+          non_neg_integer()
+        ) ::
+          %ClientMessageResponse{
+            current_view: non_neg_integer(),
+            client_id: atom(),
+            replica_id: atom(),
+            result: any(),
+            request_timestamp: non_neg_integer()
+          }
 
-#   def new(
-#         current_view,
-#         client_id,
-#         replica_id,
-#         result,
-#         request_timestamp
-#       ) do
-#     %ClientMessageResponse{
-#       current_view: current_view,
-#       client_id: client_id,
-#       replica_id: replica_id,
-#       result: result,
-#       request_timestamp: request_timestamp
-#     }
-#   end
-# end
+  def new(
+        current_view,
+        client_id,
+        replica_id,
+        result,
+        request_timestamp
+      ) do
+    %ClientMessageResponse{
+      current_view: current_view,
+      client_id: client_id,
+      replica_id: replica_id,
+      result: result,
+      request_timestamp: request_timestamp
+    }
+  end
+end
 
 defmodule Pbft.AppendRequest do
   @moduledoc """
