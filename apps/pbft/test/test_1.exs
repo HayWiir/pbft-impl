@@ -28,7 +28,8 @@ defmodule Test1 do
         cluster,
         cluster_pub_keys,
         client_pub_keys,
-        a_private
+        a_private,
+        100_000
       )
 
     b_config =
@@ -36,7 +37,8 @@ defmodule Test1 do
         cluster,
         cluster_pub_keys,
         client_pub_keys,
-        b_private
+        b_private,
+        100_000
       )
 
     c_config =
@@ -44,7 +46,8 @@ defmodule Test1 do
         cluster,
         cluster_pub_keys,
         client_pub_keys,
-        c_private
+        c_private,
+        100_000
       )
 
     d_config =
@@ -52,7 +55,8 @@ defmodule Test1 do
         cluster,
         cluster_pub_keys,
         client_pub_keys,
-        d_private
+        d_private,
+        100_000
       )
 
     spawn(:a, fn -> Pbft.become_primary(a_config) end)
@@ -62,7 +66,7 @@ defmodule Test1 do
 
     client =
       spawn(:client, fn ->
-        client = Pbft.Client.new_client(:b, client_private, cluster_pub_keys)
+        client = Pbft.Client.new_client(:b, client_private, cluster_pub_keys, cluster)
 
         Pbft.Client.nop(client)
 
@@ -105,7 +109,8 @@ defmodule Test1 do
         cluster,
         cluster_pub_keys,
         client_pub_keys,
-        a_private
+        a_private,
+        100_000
       )
 
     b_config =
@@ -113,7 +118,8 @@ defmodule Test1 do
         cluster,
         cluster_pub_keys,
         client_pub_keys,
-        b_private
+        b_private,
+        100_000
       )
 
     c_config =
@@ -121,7 +127,8 @@ defmodule Test1 do
         cluster,
         cluster_pub_keys,
         client_pub_keys,
-        c_private
+        c_private,
+        100_000
       )
 
     d_config =
@@ -129,7 +136,8 @@ defmodule Test1 do
         cluster,
         cluster_pub_keys,
         client_pub_keys,
-        d_private
+        d_private,
+        100_000
       )
 
     spawn(:a, fn -> Pbft.become_primary(a_config) end)
@@ -139,7 +147,7 @@ defmodule Test1 do
 
     proc =
       spawn(:c2, fn ->
-        c2 = Pbft.Client.new_client(:a, c2_private, cluster_pub_keys)
+        c2 = Pbft.Client.new_client(:a, c2_private, cluster_pub_keys, cluster)
 
         {:ok, c2} = Pbft.Client.enq(c2, 5)
         {{:value, v}, c2} = Pbft.Client.deq(c2)

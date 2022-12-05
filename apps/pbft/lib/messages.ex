@@ -270,3 +270,65 @@ defmodule Pbft.AppendRequest do
     }
   end
 end
+
+defmodule Pbft.ViewChange do
+  @moduledoc """
+  ViewChange RPCs.
+  """
+  alias __MODULE__
+
+  @enforce_keys [
+    :type,
+    :new_view
+  ]
+
+  defstruct(
+    type: nil,
+    new_view: nil,
+    sequence_number: nil,
+    updated_log: nil,
+    view_change_list: nil,
+    replica_id: nil
+  )
+
+  @doc """
+  Create a new ViewChange
+  """
+  @spec new_change(
+          non_neg_integer(),
+          atom()
+        ) ::
+          %ViewChange{}
+  def new_change(
+        new_view,
+        replica_id
+      ) do
+    %ViewChange{
+      type: "change",
+      new_view: new_view,
+      replica_id: replica_id
+    }
+  end
+
+  @doc """
+  Create a new NewView
+  """
+  @spec new_view(
+          non_neg_integer(),
+          list(),
+          map()
+        ) ::
+          %ViewChange{}
+  def new_view(
+        new_view,
+        view_change_list,
+        updated_log
+      ) do
+    %ViewChange{
+      type: "new",
+      new_view: new_view,
+      view_change_list: view_change_list,
+      updated_log: updated_log
+    }
+  end
+end
