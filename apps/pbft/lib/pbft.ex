@@ -326,6 +326,7 @@ defmodule Pbft do
   """
   @spec become_replica(%Pbft{}) :: no_return()
   def become_replica(state) do
+    # state = start_election_timer(state)
     replica(make_replica(state), %{})
   end
 
@@ -617,12 +618,15 @@ defmodule Pbft do
             #TODO: Function to properly verify partially true logs.
             IO.puts("Replica #{whoami} verified new log from #{sender}\n")
             state = %{state | current_view: state.current_view + 1, is_primary: false, log: new_log}
+            # state = reset_election_timer
             replica(state, extra_state)
           else
             replica(state, extra_state)
+            IO.puts("Replica #{whoami} FAILED new log from #{sender}\n")
           end
 
         else
+          IO.puts("Replica #{whoami} FAILED mssg from #{sender}\n")
           replica(state, extra_state)
         end
 
@@ -668,7 +672,9 @@ defmodule Pbft.Client do
     private_key: nil,
     cluster_pub_keys: nil,
     max_failures: nil,
-    cluster: nil
+    response_timer: nil,
+    cluster: nil,
+    response_timeout: nil
   )
 
   @doc """
@@ -684,8 +690,44 @@ defmodule Pbft.Client do
       private_key: private_key,
       cluster_pub_keys: cluster_pub_keys,
       max_failures: div(map_size(cluster_pub_keys), 3),
-      cluster: cluster
+      response_timer: nil,
+      cluster: cluster,
+      response_timeout: 2000
     }
+  end
+
+  # Save a handle to the response timer.
+  @spec save_response_timer(%Pbft{}, reference()) :: %Pbft{}
+  defp save_response_timer(state, timer) do
+    %{state | response_timer: timer}
+  end
+
+  # Cancel the response timer.
+  @spec cancel_response_timer(%Client{}) :: %Client{}
+  defp cancel_response_timer(state) do
+    if not Kernel.is_nil(state.response_timer) do
+      Emulation.cancel_timer(state.response_timer)
+    end
+
+    save_response_timer(state, nil)
+  end
+
+  # Start response timer if not started previously
+  @spec start_response_timer(%Client{}) :: %Client{}
+  defp start_response_timer(state) do
+    if Kernel.is_nil(state.response_timer) do
+      save_response_timer(state, Emulation.timer(state.response_timeout))
+    else
+      state
+    end
+  end
+
+  # Reset response Timer
+  @spec reset_response_timer(%Client{}) :: %Client{}
+  defp reset_response_timer(state) do
+    # You might find `save_response_timer` of use.
+    state = cancel_response_timer(state)
+    start_response_timer(state)
   end
 
   @doc """
@@ -697,10 +739,10 @@ defmodule Pbft.Client do
     state = %{state | request_timestamp: state.request_timestamp + 1}
 
     IO.puts("Client #{whoami} broadcast enq ")
-    broadcast_to_all(state, {req, sign_message(req, state.private_key)})
-    # send(state.primary, {req, sign_message(req, state.private_key)})
-
-    client(state, %{resp: 0})
+    # broadcast_to_all(state, {req, sign_message(req, state.private_key)})
+    send(state.primary, {req, sign_message(req, state.private_key)})
+    state = reset_response_timer(state)
+    client(state, %{resp: 0, mssg: {req, sign_message(req, state.private_key)}})
   end
 
   @doc """
@@ -712,9 +754,10 @@ defmodule Pbft.Client do
     state = %{state | request_timestamp: state.request_timestamp + 1}
 
     IO.puts("Client #{whoami} sent deq ")
+    # broadcast_to_all(state, {req, sign_message(req, state.private_key)})
     send(state.primary, {req, sign_message(req, state.private_key)})
-
-    client(state, %{resp: 0})
+    state = reset_response_timer(state)
+    client(state, %{resp: 0, mssg: {req, sign_message(req, state.private_key)}})
   end
 
   @doc """
@@ -724,9 +767,10 @@ defmodule Pbft.Client do
   def nop(state) do
     req = Pbft.ClientMessageRequest.new(whoami, {:nop, nil}, state.request_timestamp)
     state = %{state | request_timestamp: state.request_timestamp + 1}
+    # broadcast_to_all(state, {req, sign_message(req, state.private_key)})
     send(state.primary, {req, sign_message(req, state.private_key)})
-
-    client(state, %{resp: 0})
+    state = reset_response_timer(state)
+    client(state, %{resp: 0, mssg: {req, sign_message(req, state.private_key)}})
   end
 
   @doc """
@@ -735,6 +779,21 @@ defmodule Pbft.Client do
   @spec client(%Client{}, any()) :: {:empty | {:value, any()} | :ok, %Client{}}
   def client(state, extra_state) do
     receive do
+      # {sender, :nop} ->
+      #   req = Pbft.ClientMessageRequest.new(whoami, {:nop, nil}, state.request_timestamp)
+      #   state = %{state | request_timestamp: state.request_timestamp + 1}
+      #   send(state.primary, {req, sign_message(req, state.private_key)})
+
+      #   client(state, extra_state)
+      
+      # {sender, {:enq}  
+
+      :timer ->
+        IO.puts("Client #{whoami} response timer expired")
+        state = reset_response_timer(state)
+        broadcast_to_all(state, extra_state.mssg)
+        client(state, extra_state)
+
       {sender,
        {%Pbft.ClientMessageResponse{
           current_view: current_view,
