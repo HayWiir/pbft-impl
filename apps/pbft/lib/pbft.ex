@@ -202,6 +202,24 @@ defmodule Pbft do
   end
 
   @doc """
+  Compares two logs
+  """
+  @spec compare_logs(map(), map(), non_neg_integer()) :: boolean
+  defp compare_logs(log_a, log_b, seq) do
+    cond do
+      map_size(log_a) != map_size(log_b) ->
+        false
+      not Map.has_key?(log_a, seq)  and not Map.has_key?(log_b, seq) ->
+        true
+      {log_a[seq].view, log_a[seq].request_digest} != {log_b[seq].view, log_b[seq].request_digest} ->
+        false 
+      {log_a[seq].view, log_a[seq].request_digest} == {log_b[seq].view, log_b[seq].request_digest} ->  
+        compare_logs(log_a, log_b, seq+1)
+
+    end
+  end
+
+  @doc """
   Verifies a message digest for a given message and public key
   """
   @spec verify_digest(binary(), any(), binary()) :: {true | false}
@@ -267,11 +285,14 @@ defmodule Pbft do
   """
   @spec make_primary(%Pbft{}) :: %Pbft{is_primary: true}
   def make_primary(state) do
-    %{
+    state = %{
       state
       | is_primary: true,
         next_index: state.commit_index + 1
     }
+
+    state = candidate_changing(state)
+    state = cancel_election_timer(state)
   end
 
   # Verift list of View Change Messages
@@ -326,7 +347,6 @@ defmodule Pbft do
   """
   @spec become_replica(%Pbft{}) :: no_return()
   def become_replica(state) do
-    # state = start_election_timer(state)
     replica(make_replica(state), %{})
   end
 
@@ -347,7 +367,7 @@ defmodule Pbft do
           operation: operation,
           request_timestamp: request_timestamp
         }, request_digest}} ->
-        IO.puts("Replica #{whoami} received command from #{sender}\n")
+        
 
         request_mssg = %Pbft.ClientMessageRequest{
           client_id: client_id,
@@ -355,55 +375,63 @@ defmodule Pbft do
           request_timestamp: request_timestamp
         }
 
-        if state.is_primary do
-          if verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) do
-            if not (Map.has_key?(extra_state, client_id) and MapSet.member?(extra_state[client_id], request_timestamp)) do
-              # Broadcast PrePrepare Message
-              append_message =
-                Pbft.AppendRequest.new_prepepare(
-                  state.current_view,
-                  state.next_index,
-                  request_digest
+        if not state.is_changing do
+          IO.puts("Replica #{whoami} received command from #{sender}\n")
+          if state.is_primary do
+            if verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) do
+              if not (Map.has_key?(extra_state, client_id) and MapSet.member?(extra_state[client_id], request_timestamp)) do
+                # Broadcast PrePrepare Message
+                append_message =
+                  Pbft.AppendRequest.new_prepepare(
+                    state.current_view,
+                    state.next_index,
+                    request_digest
+                  )
+
+                request_message = %Pbft.ClientMessageRequest{
+                  client_id: client_id,
+                  operation: operation,
+                  request_timestamp: request_timestamp
+                }
+
+                client_set = Map.get(extra_state, client_id, MapSet.new())
+                extra_state = Map.put(extra_state, client_id, MapSet.put(client_set, request_timestamp))
+
+                IO.puts("Primary #{whoami} broadcasting preprepare\n")
+
+                broadcast_to_all(
+                  state,
+                  {append_message, sign_message(append_message, state.private_key), request_message}
                 )
 
-              request_message = %Pbft.ClientMessageRequest{
-                client_id: client_id,
-                operation: operation,
-                request_timestamp: request_timestamp
-              }
-
-              client_set = Map.get(extra_state, client_id, MapSet.new())
-              extra_state = Map.put(extra_state, client_id, MapSet.put(client_set, request_timestamp))
-
-              broadcast_to_all(
-                state,
-                {append_message, sign_message(append_message, state.private_key), request_message}
-              )
-
-              state = %{state | next_index: state.next_index + 1}
-              replica(state, extra_state)
+                state = %{state | next_index: state.next_index + 1}
+                replica(state, extra_state)
+              else
+                replica(state, extra_state)
+              end
             else
+              IO.puts("Not Verified")
               replica(state, extra_state)
             end
           else
-            IO.puts("Not Verified")
+            # Forward client message to primary
+            state = start_election_timer(state)
+
+            send(
+              get_primary(state),
+              {%Pbft.ClientMessageRequest{
+                client_id: client_id,
+                operation: operation,
+                request_timestamp: request_timestamp
+              }, request_digest}
+            )
+
             replica(state, extra_state)
           end
         else
-          # Forward client message to primary
-          state = start_election_timer(state)
-
-          send(
-            get_primary(state),
-            {%Pbft.ClientMessageRequest{
-               client_id: client_id,
-               operation: operation,
-               request_timestamp: request_timestamp
-             }, request_digest}
-          )
-
           replica(state, extra_state)
         end
+
 
       {sender,
        {%Pbft.AppendRequest{
@@ -432,7 +460,8 @@ defmodule Pbft do
           request_timestamp: request_timestamp
         }
 
-        if sender == get_primary(state) and
+        if not state.is_changing and 
+            sender == get_primary(state) and
              verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) and
              verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) and
              append_view == state.current_view do
@@ -445,7 +474,7 @@ defmodule Pbft do
             state = add_log_entry(state, sequence_number, log_entry)
             client_set = Map.get(extra_state, client_id, MapSet.new())
             extra_state = Map.put(extra_state, client_id, MapSet.put(client_set, request_timestamp))
-            state = start_election_timer(state)
+            state = reset_election_timer(state)
 
             prepare_message = Pbft.AppendRequest.new_pepare(state.current_view, sequence_number, request_digest, whoami)
             broadcast_to_all(state, {prepare_message, sign_message(prepare_message, state.private_key)})
@@ -453,7 +482,6 @@ defmodule Pbft do
             replica(state, extra_state)
           end
         else
-          IO.puts("Replica #{whoami} Not Verified PrePrepare from #{sender}\n")
           replica(state, extra_state)
         end
 
@@ -473,11 +501,12 @@ defmodule Pbft do
           replica_id: replica_id
         }
 
-        if verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) and
+        if not state.is_changing and verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) and
              Map.has_key?(state.log, sequence_number) and
              state.log[sequence_number].view == current_view and
              state.log[sequence_number].request_digest == request_digest do
           IO.puts("Replica #{whoami}  Verified Prepare from #{sender} \n")
+          state = reset_election_timer(state)
 
           # Add prepared count
           new_log_entry = %{state.log[sequence_number] | prepared_count: state.log[sequence_number].prepared_count + 1}
@@ -494,7 +523,6 @@ defmodule Pbft do
 
           replica(state, extra_state)
         else
-          IO.puts("Replica #{whoami}  Failed Prepare from #{sender}\n")
           replica(state, extra_state)
         end
 
@@ -514,7 +542,7 @@ defmodule Pbft do
           replica_id: replica_id
         }
 
-        if verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) and
+        if not state.is_changing and verify_digest(append_digest, append_mssg, state.cluster_pub_keys[sender]) and
              Map.has_key?(state.log, sequence_number) and
              state.log[sequence_number].view == current_view and
              state.log[sequence_number].request_digest == request_digest do
@@ -523,6 +551,7 @@ defmodule Pbft do
           # Add committed count
           new_log_entry = %{state.log[sequence_number] | commited_count: state.log[sequence_number].commited_count + 1}
           state = %{state | log: %{state.log | sequence_number => new_log_entry}}
+          state = reset_election_timer(state)
 
           if state.log[sequence_number].commited_count == 2 * state.max_failures + 1 do
             # Set committed
@@ -567,6 +596,8 @@ defmodule Pbft do
           extra_state = Map.put(extra_state, :view_change_list, Map.get(extra_state, :view_change_list, []) ++ [{change_mssg, change_digest}])
 
           IO.puts("Replica #{whoami}  received view_change from #{sender}\n")
+          state = candidate_changing(state)
+          state = cancel_election_timer(state)
 
           if extra_state.change_count == state.max_failures * 2 do
             state = %{state | current_view: state.current_view + 1}
@@ -611,22 +642,21 @@ defmodule Pbft do
         if whoami != get_primary(state, new_view) and
              verify_digest(new_view_digest, new_view_mssg, state.cluster_pub_keys[sender]) and
              verify_view_change(state, view_change_list, 0) do 
-          IO.puts("Replica #{whoami} received NEW VIEW from #{sender}\n")
+          IO.puts("Replica #{whoami} received NEW VIEW from #{sender} and is_changing:  #{inspect(state.is_changing)}\n")
 
           new_log = generate_new_log(%{state | current_view: state.current_view+1}, %{}, 0)
-          if new_log == updated_log do
+          if compare_logs(new_log, updated_log, 0) do
             #TODO: Function to properly verify partially true logs.
             IO.puts("Replica #{whoami} verified new log from #{sender}\n")
-            state = %{state | current_view: state.current_view + 1, is_primary: false, log: new_log}
+            state = %{state | current_view: new_view, is_primary: false, is_changing: false, log: new_log}
             # state = reset_election_timer
             replica(state, extra_state)
           else
+            IO.puts("Replica #{whoami} failed to verify new log from #{sender}\n my_log: #{inspect(new_log)} \n recevied: #{inspect(updated_log)}")
             replica(state, extra_state)
-            IO.puts("Replica #{whoami} FAILED new log from #{sender}\n")
           end
 
         else
-          IO.puts("Replica #{whoami} FAILED mssg from #{sender}\n")
           replica(state, extra_state)
         end
 
@@ -636,6 +666,24 @@ defmodule Pbft do
 
       {sender, :die} ->
         Process.exit(self(), :normal)
+      {sender, :byzantine_mssg} ->
+        byzantine_wrong_message(state, extra_state)
+      {sender, :byzantine_seq} ->
+        byzantine_wrong_sequence(state, extra_state)  
+      {sender, {:byzantine_exclude, cluster}} ->
+        state =   %{state | cluster: cluster}
+        IO.puts("Primary #{whoami} byzantine cluster #{inspect(cluster)}\n")
+        replica(state, extra_state)
+
+    end
+  end
+
+  @spec candidate_changing(%Pbft{}) :: %Pbft{}
+  defp candidate_changing(state) do
+    if state.is_primary do
+      %{state | is_changing: false}
+    else
+      %{state | is_changing: true}
     end
   end
 
@@ -650,6 +698,166 @@ defmodule Pbft do
     IO.puts("Replica #{whoami}  triggered view change")
     replica(%{state | is_changing: true}, extra_state)
   end
+
+  @doc """
+  This function implements the state machine for a process
+  that is currently byzantine.
+  """
+  @spec byzantine_wrong_message(%Pbft{}, any()) :: no_return()
+  def byzantine_wrong_message(state, extra_state) do
+    receive do
+      {sender,
+       {%Pbft.ClientMessageRequest{
+          client_id: client_id,
+          operation: operation,
+          request_timestamp: request_timestamp
+        }, request_digest}} ->
+        
+
+        request_mssg = %Pbft.ClientMessageRequest{
+          client_id: client_id,
+          operation: operation,
+          request_timestamp: request_timestamp
+        }
+
+        if not state.is_changing do
+          IO.puts("Byzantine replica #{whoami} received command from #{sender}\n")
+          if state.is_primary do
+            if verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) do
+              if not (Map.has_key?(extra_state, client_id) and MapSet.member?(extra_state[client_id], request_timestamp)) do
+                # Broadcast PrePrepare Message
+                append_message =
+                  Pbft.AppendRequest.new_prepepare(
+                    state.current_view,
+                    state.next_index,
+                    request_digest
+                  )
+
+                request_message = %Pbft.ClientMessageRequest{
+                  client_id: client_id,
+                  operation: :fake_op,
+                  request_timestamp: request_timestamp
+                }
+
+                client_set = Map.get(extra_state, client_id, MapSet.new())
+                extra_state = Map.put(extra_state, client_id, MapSet.put(client_set, request_timestamp))
+
+                IO.puts("Byzantine Primary #{whoami} broadcasting preprepare\n")
+
+                broadcast_to_all(
+                  state,
+                  {append_message, sign_message(append_message, state.private_key), request_message}
+                )
+
+                state = %{state | next_index: state.next_index + 1}
+                byzantine_wrong_message(state, extra_state)
+              else
+                byzantine_wrong_message(state, extra_state)
+              end
+            else
+              IO.puts("Not Verified")
+              byzantine_wrong_message(state, extra_state)
+            end
+          else
+            # Forward client message to primary
+            state = start_election_timer(state)
+
+            send(
+              get_primary(state),
+              {%Pbft.ClientMessageRequest{
+                client_id: client_id,
+                operation: operation,
+                request_timestamp: request_timestamp
+              }, request_digest}
+            )
+
+            byzantine_wrong_message(state, extra_state)
+          end
+        else
+          byzantine_wrong_message(state, extra_state)
+        end
+    end
+  end
+  
+  @doc """
+  This function implements the state machine for a process
+  that is currently byzantine.
+  """
+  @spec byzantine_wrong_sequence(%Pbft{}, any()) :: no_return()
+  def byzantine_wrong_sequence(state, extra_state) do
+    receive do
+      {sender,
+       {%Pbft.ClientMessageRequest{
+          client_id: client_id,
+          operation: operation,
+          request_timestamp: request_timestamp
+        }, request_digest}} ->
+        
+
+        request_mssg = %Pbft.ClientMessageRequest{
+          client_id: client_id,
+          operation: operation,
+          request_timestamp: request_timestamp
+        }
+
+        if not state.is_changing do
+          IO.puts("Byzantine replica #{whoami} received command from #{sender}\n")
+          if state.is_primary do
+            if verify_digest(request_digest, request_mssg, state.client_pub_keys[client_id]) do
+              if not (Map.has_key?(extra_state, client_id) and MapSet.member?(extra_state[client_id], request_timestamp)) do
+                # Broadcast PrePrepare Message
+                append_message =
+                  Pbft.AppendRequest.new_prepepare(
+                    state.current_view,
+                    0,
+                    request_digest
+                  )
+
+                request_message = %Pbft.ClientMessageRequest{
+                  client_id: client_id,
+                  operation: operation,
+                  request_timestamp: request_timestamp
+                }
+
+                client_set = Map.get(extra_state, client_id, MapSet.new())
+                extra_state = Map.put(extra_state, client_id, MapSet.put(client_set, request_timestamp))
+
+                IO.puts("Byzantine Primary #{whoami} broadcasting preprepare\n")
+
+                broadcast_to_all(
+                  state,
+                  {append_message, sign_message(append_message, state.private_key), request_message}
+                )
+
+                state = %{state | next_index: state.next_index + 1}
+                byzantine_wrong_sequence(state, extra_state)
+              else
+                byzantine_wrong_sequence(state, extra_state)
+              end
+            else
+              IO.puts("Not Verified")
+              byzantine_wrong_sequence(state, extra_state)
+            end
+          else
+            # Forward client message to primary
+            state = start_election_timer(state)
+
+            send(
+              get_primary(state),
+              {%Pbft.ClientMessageRequest{
+                client_id: client_id,
+                operation: operation,
+                request_timestamp: request_timestamp
+              }, request_digest}
+            )
+
+            byzantine_wrong_sequence(state, extra_state)
+          end
+        else
+          byzantine_wrong_sequence(state, extra_state)
+        end
+    end
+  end  
 end
 
 defmodule Pbft.Client do
